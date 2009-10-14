@@ -24,6 +24,8 @@ namespace System.Web.Mvc.IronRuby.Tests.Core
     [Concern(typeof(RubyEngine))]
     public class when_asked_to_initialize_ironruby_mvc_with_existing_routes_file : StaticContextSpecification
     {
+        private IControllerFactory originalFactory;
+
         private RubyEngine _engine;
         private IPathProvider _pathProvider;
 
@@ -40,6 +42,9 @@ namespace System.Web.Mvc.IronRuby.Tests.Core
             _pathProvider.WhenToldTo(pp => pp.MapPath("~/routes.rb")).Return("routes.rb");
 //            SetupResult.For(RouteTable.Routes).Return(new RouteCollection());
             RouteTable.Routes.Clear();
+
+            //save the original controller factory to avoid chaining all test factories
+            originalFactory = ControllerBuilder.Current.GetControllerFactory();
         }
 
         /// <summary>
@@ -114,11 +119,20 @@ namespace System.Web.Mvc.IronRuby.Tests.Core
                                             });
             passes.ShouldBeTrue();
         }
+
+        protected override void AfterEachObservation()
+        {
+            //restore the original controller factory to avoid chaining of all test factories
+            ControllerBuilder.Current.SetControllerFactory(originalFactory);
+        }
+
     }
 
     [Concern(typeof(RubyEngine))]
     public class when_asked_to_initialize_ironruby_mvc_with_non_existing_routes_file : StaticContextSpecification
     {
+        private IControllerFactory originalFactory;
+
         private RubyEngine _engine;
         private IPathProvider _pathProvider;
 
@@ -127,6 +141,9 @@ namespace System.Web.Mvc.IronRuby.Tests.Core
             _pathProvider = An<IPathProvider>();
             _pathProvider.WhenToldTo(pp => pp.ApplicationPhysicalPath).Return(Environment.CurrentDirectory);
             _pathProvider.WhenToldTo(pp => pp.FileExists("~/routes.rb")).Return(false);
+
+            //save the original controller factory to avoid chaining all test factories
+            originalFactory = ControllerBuilder.Current.GetControllerFactory();
         }
 
         protected override void Because()
@@ -141,7 +158,11 @@ namespace System.Web.Mvc.IronRuby.Tests.Core
             _engine.Context.GetGlobalVariable("routes").ShouldBeNull();
         }
 
-
+        protected override void AfterEachObservation()
+        {
+            //restore the original controller factory to avoid chaining of all test factories
+            ControllerBuilder.Current.SetControllerFactory(originalFactory);
+        }
     }
 
     public abstract class with_an_engine_initialized : with_ironruby_initialized<RubyEngine>

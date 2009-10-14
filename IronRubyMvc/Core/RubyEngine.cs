@@ -31,11 +31,6 @@ namespace System.Web.Mvc.IronRuby.Core
     {
         private readonly string _routesPath;
 
-        //added for xunit testing to create a "The" moc
-        public RubyEngine()
-        {
-        }
-
         /// <summary>
         /// Initializes a new instance of the <see cref="RubyEngine"/> class.
         /// </summary>
@@ -291,7 +286,8 @@ namespace System.Web.Mvc.IronRuby.Core
         public void RequireRubyFile(string path)
         {
             //Engine.RequireRubyFile(path);
-            ExecuteScript("require '" + path.Replace("\\","/").Replace("~", string.Empty) + "'", CurrentScope);
+            path = PathProvider.MapPath(path).Replace('\\', '/').Replace("~", string.Empty);
+            ExecuteScript(String.Format("require '{0}'", path), CurrentScope);
         }
 
         /// <summary>
@@ -414,7 +410,6 @@ namespace System.Web.Mvc.IronRuby.Core
             var runtime = Ruby.CreateRuntime(runtimeSetup);
             return new RubyEngine(runtime, vpp, routesPath);
         }
-
 
         public T GetGlobalVariable<T>(string name)
         {

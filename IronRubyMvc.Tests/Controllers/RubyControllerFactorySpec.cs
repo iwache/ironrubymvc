@@ -14,36 +14,29 @@ using IronRuby.Builtins;
 
 namespace System.Web.Mvc.IronRuby.Tests.Controllers
 {
-    public abstract class with_ironruby_mvc_and_routes_file : InstanceContextSpecification<RubyControllerFactory>
+    [Concern(typeof(RubyControllerFactory))]
+    public abstract class with_ironruby_mvc_and_routes_and_controller_file : InstanceContextSpecification<RubyControllerFactory>
     {
-        protected IPathProvider _pathProvider;
-        protected IRubyEngine _rubyEngine;
-        protected RequestContext _requestContext;
-
-        protected override void EstablishContext()
+        /// <summary>
+        /// Create a text file with content from value
+        /// </summary>
+        /// <param name="path">full text file path</param>
+        /// <param name="value">text file content</param>
+        protected void CreateFile(string path, string value)
         {
-            base.EstablishContext();
-
-            //create a routes.rb file in current directory
-            createRoutesFile("routes.rb");
-
-            _pathProvider = An<IPathProvider>();
-            _pathProvider.WhenToldTo(pp => pp.ApplicationPhysicalPath).Return(Environment.CurrentDirectory);
-            _pathProvider.WhenToldTo(pp => pp.FileExists("~/routes.rb")).Return(true);
-            _pathProvider.WhenToldTo(pp => pp.MapPath("~/routes.rb")).Return("routes.rb");
-            RouteTable.Routes.Clear();
-
-            _requestContext = new RequestContext(new Mock<HttpContextBase>().Object, new RouteData());
-
-            RubyEngine _theRubyEngine = RubyEngine.InitializeIronRubyMvc(_pathProvider, "~/routes.rb");
-            _rubyEngine = _theRubyEngine;
+            FileStream fs = new FileStream(path, FileMode.Create);
+            BinaryWriter bw = new BinaryWriter(fs);
+            bw.Write(ASCIIEncoding.Default.GetBytes(value));
+            bw.Flush();
+            bw.Close();
+            fs.Close();
         }
-
+        
         /// <summary>
         /// create a default routes file in path
         /// </summary>
         /// <param name="path">full path name for the routes file to create</param>
-        private void createRoutesFile(string path)
+        protected virtual void CreateRoutesFile(string path)
         {
             var script = new StringBuilder();
 
@@ -60,45 +53,11 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
         }
 
         /// <summary>
-        /// Creates a file with content value in path
+        /// Creates a ruby controller file with content value in path
         /// </summary>
         /// <param name="path">file full path name</param>
         /// <param name="value">file content as string</param>
-        protected void CreateFile(string path, string value)
-        {
-            FileStream fs = new FileStream(path, FileMode.Create);
-            BinaryWriter bw = new BinaryWriter(fs);
-            bw.Write(ASCIIEncoding.Default.GetBytes(value));
-            bw.Flush();
-            bw.Close();
-            fs.Close();
-        }
-    }
-
-    [Concern(typeof(RubyControllerFactory))]
-    public abstract class with_ironruby_mvc_and_routes_and_controller_file : with_ironruby_mvc_and_routes_file
-    {
-        protected const string _controllerName = "My";
-        protected const string _controllerClassName = _controllerName + "Controller";
-
-        protected string _mappedControllerPath = _controllerClassName + ".rb";
-        protected string _virtualControllerPath = @"~\Controllers\{0}.rb"
-            .FormattedWith(_controllerClassName);
-
-        protected IControllerFactory _controllerFactory;
-        protected IController _controller;
-
-        protected override void EstablishContext()
-        {
-            base.EstablishContext();
-
-            createControllerFile(_mappedControllerPath, _controllerClassName);
-
-            _pathProvider.WhenToldTo(pp => pp.FileExists(_virtualControllerPath)).Return(true);
-            _pathProvider.WhenToldTo(pp => pp.MapPath(_virtualControllerPath)).Return(_mappedControllerPath);
-        }
-
-        protected virtual void createControllerFile(string path, string controllerName)
+        protected virtual void CreateControllerFile(string path, string controllerName)
         {
             var script = new StringBuilder();
             script.AppendLine("class {0} < Controller".FormattedWith(controllerName));
@@ -111,17 +70,59 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
 
             CreateFile(path, value);
         }
-    }
 
-    
-    [Concern(typeof(RubyControllerFactory))]
-    public class when_a_ruby_controller_needs_to_be_resolved : with_ironruby_mvc_and_routes_and_controller_file
-    {
+        private IControllerFactory originalFactory;
+
+        protected IRubyEngine _rubyEngine;
+        protected IPathProvider _pathProvider;
+        protected RequestContext _requestContext;
+        
+        protected const string _controllerName = "My";
+        protected const string _controllerClassName = "MyController";
+        protected const string _mappedControllerPath = "MyController.rb";
+        protected const string _virtualControllerPath = "~\\Controllers\\MyController.rb";
+
+        protected override void EstablishContext()
+        {
+            //create a routes.rb and a ruby controller file in current directory
+            CreateRoutesFile("routes.rb");
+            CreateControllerFile(_mappedControllerPath, _controllerClassName);
+
+            _pathProvider = An<IPathProvider>();
+            //routes.rb
+            _pathProvider.WhenToldTo(pp => pp.ApplicationPhysicalPath).Return(Environment.CurrentDirectory);
+            _pathProvider.WhenToldTo(pp => pp.FileExists("~/routes.rb")).Return(true);
+            _pathProvider.WhenToldTo(pp => pp.MapPath("~/routes.rb")).Return("routes.rb");
+            //MyController.rb
+            _pathProvider.WhenToldTo(pp => pp.FileExists(_virtualControllerPath)).Return(true);
+            _pathProvider.WhenToldTo(pp => pp.MapPath(_virtualControllerPath)).Return(_mappedControllerPath);
+
+            RouteTable.Routes.Clear();
+            _requestContext = new RequestContext(new Mock<HttpContextBase>().Object, new RouteData());
+
+            //save the original controller factory to avoid chaining all test factories
+            originalFactory = ControllerBuilder.Current.GetControllerFactory();
+
+            _rubyEngine = RubyEngine.InitializeIronRubyMvc(_pathProvider, "~/routes.rb");
+        }
+
         protected override RubyControllerFactory CreateSut()
         {
             return (RubyControllerFactory)ControllerBuilder.Current.GetControllerFactory();
         }
 
+        protected override void AfterEachObservation()
+        {
+            //restore the original controller factory to avoid chaining of all test factories
+            ControllerBuilder.Current.SetControllerFactory(originalFactory);
+        }
+    }
+    
+    [Concern(typeof(RubyControllerFactory))]
+    public class when_a_ruby_controller_needs_to_be_resolved : with_ironruby_mvc_and_routes_and_controller_file
+    {
+        private IController _controller;
+        
         protected override void Because()
         {
             _controller = Sut.CreateController(_requestContext, _controllerName);
@@ -150,18 +151,6 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
         {
             (_controller as RubyController).ControllerClassName.ShouldBeEqualTo(_controllerClassName);
         }
-
-        //[Observation]
-        //public void it_should_have_called_the_ruby_engine()
-        //{
-        //    _rubyEngine.WasToldTo(eng => eng.GetRubyClass(_controllerName)).OnlyOnce();
-        //}
-
-        //[Observation]
-        //public void should_have_called_the_inner_controller_factory()
-        //{
-        //    _controllerFactory.WasToldTo(factory => factory.CreateController(_requestContext, _controllerName)).OnlyOnce();
-        //}
     }
 
     [Concern(typeof(RubyControllerFactory))]
@@ -169,19 +158,16 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
     {
         private const string methodToFilter = "index";
 
-        private int actionFiltersCountFirst;
-        private int actionFiltersCountSecond;
-
-        protected override void createControllerFile(string path, string controllerName)
+        protected override void CreateControllerFile(string path, string controllerName)
         {
             var script = new StringBuilder();
-            script.AppendLine("class {0} < Controller".FormattedWith(controllerName));
+            script.AppendLine("class {0} < Controller".FormattedWith(_controllerClassName));
             script.AppendLine("");
             script.AppendLine("  before_action :index do |context|");
             script.AppendLine("    context.request_context.http_context.response.write(\"Hello world<br />\")");
             script.AppendLine("  end");
             script.AppendLine("");
-            script.AppendLine("  def {0}".FormattedWith(methodToFilter));
+            script.AppendLine("  def index");
             script.AppendLine("    $counter = $counter + 5");
             script.AppendLine("    \"Can't see ninjas\".to_clr_string");
             script.AppendLine("  end");
@@ -191,10 +177,9 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
             CreateFile(path, value);
         }
 
-        protected override RubyControllerFactory CreateSut()
-        {
-            return (RubyControllerFactory) ControllerBuilder.Current.GetControllerFactory();
-        }
+        private int actionFiltersCountFirst;
+        private int actionFiltersCountSecond;
+        private IController _controller;
 
         protected override void Because()
         {
@@ -222,64 +207,72 @@ namespace System.Web.Mvc.IronRuby.Tests.Controllers
     }
 
 
+    //[Concern(typeof(RubyControllerFactory))]
+    //public class when_a_controller_needs_to_be_resolved : InstanceContextSpecification<RubyControllerFactory>
+    //{
+    //    private IRubyEngine _rubyEngine;
+    //    private IControllerFactory _controllerFactory;
+    //    private IPathProvider _pathProvider;
+    //    private RequestContext _requestContext;
+    //    private const string _controllerName = "my_controller";
+    //    private IController _controller;
 
-//    [Concern(typeof(RubyControllerFactory))]
-//    public class when_a_ruby_controller_needs_to_be_resolved : InstanceContextSpecification<RubyControllerFactory>
-//    {
-//        private IRubyEngine _rubyEngine;
-//        private IControllerFactory _controllerFactory;
-//        private RequestContext _requestContext;
-//        private const string _controllerName = "my_controller";
-//        private IController _controller;
-//
-//        protected override void EstablishContext()
-//        {
-//            _rubyEngine = Dependency<IRubyEngine>();
-//            _controllerFactory = Dependency<IControllerFactory>();
-//            _requestContext = new RequestContext(new HttpContextMock().Object, new RouteData());
-//
-//            _controllerFactory
-//                .WhenToldTo(factory => factory.CreateController(_requestContext, _controllerName))
-//                .Throw(new InvalidOperationException());
-//            
-//            _rubyEngine.WhenToldTo(eng => eng.LoadController(_requestContext, _controllerName)).Return(Dependency<RubyController>());
-//            
-//        }
-//
-//        protected override RubyControllerFactory CreateSut()
-//        {
-//            return new RubyControllerFactory(_controllerFactory, _rubyEngine);
-//        }
-//
-//        protected override void Because()
-//        {
-//            _controller = Sut.CreateController(_requestContext, _controllerName);
-//        }
-//
-//        [Observation]
-//        public void should_have_returned_a_result()
-//        {
-//            _controller.ShouldNotBeNull();
-//        }
-//
-//        [Observation]
-//        public void should_have_returned_a_controller()
-//        {
-//            _controller.ShouldBeAnInstanceOf<IController>();
-//        }
-//
-//        [Observation]
-//        public void it_should_have_called_the_ruby_engine()
-//        {
-//            _rubyEngine.WasToldTo(eng => eng.LoadController(_requestContext, _controllerName)).OnlyOnce();
-//        }
-//
-//        [Observation]
-//        public void should_have_called_the_inner_controller_factory()
-//        {
-//            _controllerFactory.WasToldTo(factory => factory.CreateController(_requestContext, _controllerName)).OnlyOnce();
-//        }
-//    }
+    //    private string requirePath;
+
+    //    protected override void EstablishContext()
+    //    {
+    //        _pathProvider = An<IPathProvider>();
+    //        _rubyEngine = An<IRubyEngine>();
+    //        _controllerFactory = An<IControllerFactory>();
+    //        _requestContext = new RequestContext(new HttpContextMock().Object, new RouteData());
+
+    //        _controllerFactory
+    //            .WhenToldTo(factory => factory.CreateController(_requestContext, _controllerName))
+    //            .Throw(new InvalidOperationException());
+
+    //        _rubyEngine.WhenToldTo(eng => eng.RequireRubyFile(requirePath));
+    //    }
+
+    //    protected override RubyControllerFactory CreateSut()
+    //    {
+    //        return new RubyControllerFactory(_pathProvider, _controllerFactory, _rubyEngine);
+    //    }
+
+    //    protected override void Because()
+    //    {
+    //        _controller = Sut.CreateController(_requestContext, _controllerName);
+    //    }
+
+    //    [Observation]
+    //    public void should_have_returned_a_result()
+    //    {
+    //        _controller.ShouldNotBeNull();
+    //    }
+
+    //    [Observation]
+    //    public void should_have_returned_a_controller()
+    //    {
+    //        _controller.ShouldBeAnInstanceOf<IController>();
+    //    }
+
+    //    [Observation]
+    //    public void it_should_have_called_the_ruby_engine()
+    //    {
+    //        _rubyEngine.WasToldTo(eng => eng.RequireRubyFile(requirePath)).OnlyOnce();
+    //    }
+
+    //    [Observation]
+    //    public void it_should_have_require_path_from_ruby_engine()
+    //    {
+    //        requirePath.ShouldBeEqualTo("gaga_gaga");
+    //    }
+
+    //    [Observation]
+    //    public void should_have_called_the_inner_controller_factory()
+    //    {
+    //        _controllerFactory.WasToldTo(factory => factory.CreateController(_requestContext, _controllerName)).OnlyOnce();
+    //    }
+    //}
 
     [Concern(typeof(RubyControllerFactory))]
     public class when_a_ruby_controller_needs_to_be_disposed: InstanceContextSpecification<RubyControllerFactory>
